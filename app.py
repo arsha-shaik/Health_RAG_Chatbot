@@ -1,16 +1,16 @@
 import os
 import json
 import numpy as np
-from dotenv import load_dotenv
 import streamlit as st
 from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain.chains import RetrievalQA
 from langchain_core.prompts import ChatPromptTemplate
 
-# Load environment variables
-load_dotenv()
+# --- Load Secrets from Streamlit ---
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
+# --- Role Definitions ---
 USER_ROLES = {
     "doctor": "a highly experienced cardiologist. Provide a detailed and clinically accurate answer using medical terminology.",
     "nurse": "a compassionate and knowledgeable nurse. Use supportive and simple language suitable for explaining to patients or families.",
@@ -35,19 +35,20 @@ all_roles = list(USER_ROLES.keys()) + list(custom_roles.keys()) + ["other"]
 def get_rag_chain(role_description: str, role_name: str):
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/embedding-001",
-        google_api_key=os.environ["GEMINI_API_KEY"]
+        google_api_key=GEMINI_API_KEY
     )
     vectordb = FAISS.load_local(
         "faiss_db", embeddings, allow_dangerous_deserialization=True
     )
-    retriever = vectordb.as_retriever()
+    retriever = vectordb.as_retriever(search_type="similarity", search_kwargs={"k": 5})
 
     prompt_template = f"""
 You are {role_description}
 
 Answer the user's question using only the information provided in the context below. Be accurate, clear, and informative.
 
-If the context does not contain the answer, politely say you don't know.
+If the context does not contain the answer, say “I don’t know based on the available information.”
+Do NOT make up information or answer from outside the context.
 
 ---------------------
 Context:
@@ -62,7 +63,7 @@ Answer (as a {role_name}):
 
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
-        google_api_key=os.environ["GEMINI_API_KEY"]
+        google_api_key=GEMINI_API_KEY
     )
 
     chain = RetrievalQA.from_chain_type(
@@ -96,7 +97,7 @@ def cosine_similarity(vec1, vec2):
         return 0.0
     return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
 
-# Streamlit Setup
+# --- Streamlit UI Setup ---
 st.set_page_config(page_title="Health RAG Chatbot", page_icon="🩺", layout="wide")
 st.title("Health RAG Chatbot")
 
@@ -151,11 +152,11 @@ if "clear_input" not in st.session_state:
 if "embeddings_model" not in st.session_state:
     st.session_state["embeddings_model"] = GoogleGenerativeAIEmbeddings(
         model="models/embedding-001",
-        google_api_key=os.environ["GEMINI_API_KEY"]
+        google_api_key=GEMINI_API_KEY
     )
 embeddings_model = st.session_state["embeddings_model"]
 
-# Layout
+# --- Layout ---
 left_col, right_col = st.columns([1, 3])
 
 with left_col:
@@ -205,7 +206,7 @@ with right_col:
                 except Exception as e:
                     st.error(f"Error: {e}")
 
-    # Chat and Related Qs
+    # --- Chat and Related Questions ---
     chat_col, related_col = st.columns([3, 1])
 
     with chat_col:
@@ -235,7 +236,7 @@ with right_col:
                 for i, chat in enumerate(history):
                     if chat is not display_chat and "embedding" in chat:
                         sim = cosine_similarity(current_emb, chat["embedding"])
-                        if sim >= 0.75:  # 💡 Similarity threshold
+                        if sim >= 0.75:
                             similarities.append((sim, i, chat))
 
                 similarities.sort(key=lambda x: x[0], reverse=True)
